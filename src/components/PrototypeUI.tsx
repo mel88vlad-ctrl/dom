@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Search, Filter, Home, Building, DollarSign, ChevronDown, CheckCircle2, X, ShieldCheck, Users, Activity, Layers } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Filter, Home, Building, DollarSign, ChevronDown, CheckCircle2, X, ShieldCheck, Users, Activity, Layers, LogIn } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PropertyPassport from './PropertyPassport';
+import AuthModal from './AuthModal';
+import { propertiesAPI, offersAPI, getAuthToken } from '../services/api';
 
 const MOCK_PROPERTIES = [
   {
@@ -89,14 +91,109 @@ export default function PrototypeUI() {
   const [marketMode, setMarketMode] = useState<'supply' | 'demand'>('supply');
   const [showLiquidity, setShowLiquidity] = useState(false);
 
-  const handleOfferSubmit = (e: React.FormEvent) => {
+  // Auth state
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Data state
+  const [properties, setProperties] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // Check authentication on mount
+  useEffect(() => {
+    const token = getAuthToken();
+    setIsAuthenticated(!!token);
+  }, []);
+
+  // Load properties from API
+  useEffect(() => {
+    loadProperties();
+  }, []);
+
+  const loadProperties = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      
+      const result = await propertiesAPI.search({
+        limit: 20,
+        sort_by: 'created_at',
+        sort_order: 'desc',
+      });
+
+      if (result.success && result.data) {
+        // Transform API data to match UI format
+        const transformedProperties = result.data.map((prop: any) => ({
+          id: prop.id,
+          address: `${prop.address?.street || ''}, ${prop.address?.house_number || ''}`,
+          price: `${(prop.listing_price || 0).toLocaleString('ru-RU')} ₽`,
+          rooms: prop.rooms,
+          area: prop.area,
+          floor: `${prop.floor}/${prop.total_floors}`,
+          image: `https://picsum.photos/seed/${prop.id}/400/300`,
+          lat: prop.address?.lat || 55.751,
+          lng: prop.address?.lng || 37.618,
+          bids: prop.offers_count || 0,
+          topBid: prop.top_offer ? `${(prop.top_offer / 1_000_000).toFixed(1)} млн ₽` : 'Нет офферов',
+          liquidity: prop.liquidity_score > 7 ? 'high' : prop.liquidity_score > 4 ? 'medium' : 'low',
+          cadastral_number: prop.cadastral_number,
+          listing_id: prop.listing_id,
+        }));
+
+        setProperties(transformedProperties);
+      } else {
+        // Fallback to mock data if API returns no data
+        setProperties(MOCK_PROPERTIES);
+      }
+    } catch (err: any) {
+      console.error('Failed to load properties:', err);
+      setError('Не удалось загрузить объекты. Используются демо-данные.');
+      // Use mock data as fallback
+      setProperties(MOCK_PROPERTIES);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAuthSuccess = (user: any) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    setIsAuthModalOpen(false);
+  };
+
+  const handleOfferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setOfferSuccess(true);
-    setTimeout(() => {
+    
+    if (!isAuthenticated) {
       setIsOfferModalOpen(false);
-      setOfferSuccess(false);
-      setOfferAmount('');
-    }, 2000);
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    try {
+      const selectedProperty = properties.find(p => p.id === selectedItem);
+      if (!selectedProperty) return;
+
+      await offersAPI.create({
+        listing_id: selectedProperty.listing_id || selectedProperty.id,
+        property_id: selectedProperty.id,
+        amount: parseFloat(offerAmount),
+        financing_type: 'cash',
+      });
+
+      setOfferSuccess(true);
+      setTimeout(() => {
+        setIsOfferModalOpen(false);
+        setOfferSuccess(false);
+        setOfferAmount('');
+        loadProperties(); // Reload to get updated offer counts
+      }, 2000);
+    } catch (err: any) {
+      console.error('Failed to create offer:', err);
+      alert('Не удалось создать оффер: ' + err.message);
+    }
   };
 
   if (activeView === 'passport') {
@@ -104,7 +201,7 @@ export default function PrototypeUI() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 font-sans">
+    <div className="h-screen w-screen flex flex-col bg-gray-50 dark:bg-gray-900 font-sans overflow-hidden">
       {/* Top Navbar */}
       <header className="h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-6 flex-shrink-0 z-10">
         <div className="flex items-center gap-8">
@@ -131,16 +228,28 @@ export default function PrototypeUI() {
               className="pl-10 pr-4 py-2 w-80 bg-gray-100 dark:bg-gray-900 border-none rounded-full text-sm focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white"
             />
           </div>
-          <button className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">ВМ</span>
-          </button>
+          {isAuthenticated ? (
+            <button className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+              <span className="text-sm font-bold text-gray-700 dark:text-gray-300">
+                {currentUser?.first_name?.[0] || 'U'}
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full font-medium transition-colors"
+            >
+              <LogIn className="w-4 h-4" />
+              Войти
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Sidebar - List */}
-        <div className="w-full md:w-[450px] bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col flex-shrink-0 z-10 shadow-xl">
+        <div className="w-full md:w-[450px] bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col flex-shrink-0 z-10 shadow-xl h-full">
           
           {/* Market Toggle (Supply vs Demand) */}
           <div className="p-4 border-b border-gray-100 dark:border-gray-700">
@@ -188,12 +297,24 @@ export default function PrototypeUI() {
 
           {/* List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              {marketMode === 'supply' ? 'Найдено 3 объекта в зоне видимости' : 'Найдено 3 активных покупателя'}
-            </p>
-            
-            {marketMode === 'supply' ? (
-              MOCK_PROPERTIES.map((prop) => (
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+              </div>
+            ) : error ? (
+              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900/50 rounded-lg">
+                <p className="text-sm text-yellow-800 dark:text-yellow-300">{error}</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  {marketMode === 'supply' 
+                    ? `Найдено ${properties.length} объектов` 
+                    : 'Найдено 3 активных покупателя'}
+                </p>
+                
+                {marketMode === 'supply' ? (
+                  properties.map((prop) => (
                 <div 
                   key={prop.id}
                   onClick={() => setActiveView('passport')}
@@ -238,7 +359,12 @@ export default function PrototypeUI() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        setIsOfferModalOpen(true);
+                        setSelectedItem(prop.id);
+                        if (!isAuthenticated) {
+                          setIsAuthModalOpen(true);
+                        } else {
+                          setIsOfferModalOpen(true);
+                        }
                       }}
                       className="w-full py-2.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 text-white rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
                     >
@@ -279,11 +405,13 @@ export default function PrototypeUI() {
                 </div>
               ))
             )}
+              </>
+            )}
           </div>
         </div>
 
         {/* Right Area - Map Mockup */}
-        <div className="flex-1 relative bg-[#e5e3df] dark:bg-[#1a1a1a] overflow-hidden">
+        <div className="flex-1 relative bg-[#e5e3df] dark:bg-[#1a1a1a] h-full">
           {/* Grid pattern to simulate map */}
           <div className="absolute inset-0 opacity-20 dark:opacity-10" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
           
@@ -299,7 +427,7 @@ export default function PrototypeUI() {
 
           {/* Map Pins */}
           {marketMode === 'supply' ? (
-            MOCK_PROPERTIES.map((prop, index) => {
+            properties.map((prop, index) => {
               const top = `${30 + index * 20}%`;
               const left = `${40 + (index % 2 === 0 ? 10 : -10)}%`;
               const isSelected = selectedItem === prop.id;
@@ -463,6 +591,13 @@ export default function PrototypeUI() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={handleAuthSuccess}
+      />
     </div>
   );
 }
