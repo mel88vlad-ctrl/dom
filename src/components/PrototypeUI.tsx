@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
-import { Search, Filter, Home, Building, DollarSign, ChevronDown, CheckCircle2, X, ShieldCheck, Users, Activity, Layers } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Filter, Home, Building, DollarSign, ChevronDown, CheckCircle2, X, ShieldCheck, Users, Activity, Layers, LogIn, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PropertyPassport from './PropertyPassport';
+import AuthModal from './AuthModal';
+import YandexMap from './YandexMap';
+import { propertiesAPI, offersAPI, getAuthToken } from '../services/api';
 
 const MOCK_PROPERTIES = [
   {
@@ -12,11 +16,11 @@ const MOCK_PROPERTIES = [
     area: 120,
     floor: '4/7',
     image: 'https://picsum.photos/seed/apt1/400/300',
-    lat: 55.741,
-    lng: 37.598,
+    lat: 55.7413,
+    lng: 37.5982,
     bids: 3,
     topBid: '44.5 млн ₽',
-    liquidity: 'high' // green
+    liquidity: 'high'
   },
   {
     id: 2,
@@ -26,11 +30,11 @@ const MOCK_PROPERTIES = [
     area: 155,
     floor: '45/70',
     image: 'https://picsum.photos/seed/apt2/400/300',
-    lat: 55.747,
-    lng: 37.539,
+    lat: 55.7476,
+    lng: 37.5394,
     bids: 1,
     topBid: '80 млн ₽',
-    liquidity: 'medium' // yellow
+    liquidity: 'medium'
   },
   {
     id: 3,
@@ -40,11 +44,11 @@ const MOCK_PROPERTIES = [
     area: 65,
     floor: '12/22',
     image: 'https://picsum.photos/seed/apt3/400/300',
-    lat: 55.708,
-    lng: 37.575,
+    lat: 55.7082,
+    lng: 37.5751,
     bids: 5,
     topBid: '23 млн ₽',
-    liquidity: 'low' // red
+    liquidity: 'low'
   }
 ];
 
@@ -55,8 +59,8 @@ const MOCK_BUYERS = [
     budget: 'до 25 000 000 ₽',
     request: 'Ищу 2-комн. квартиру, от 60 м², рядом с парком Горького.',
     status: 'Одобрена ипотека',
-    lat: 55.731,
-    lng: 37.601
+    lat: 55.7312,
+    lng: 37.6010
   },
   {
     id: 102,
@@ -64,8 +68,8 @@ const MOCK_BUYERS = [
     budget: 'до 90 000 000 ₽',
     request: 'Видовая квартира в Сити, от 100 м², высокий этаж.',
     status: 'Наличные',
-    lat: 55.750,
-    lng: 37.535
+    lat: 55.7500,
+    lng: 37.5350
   },
   {
     id: 103,
@@ -73,12 +77,13 @@ const MOCK_BUYERS = [
     budget: 'до 15 000 000 ₽',
     request: '3-комн. для семьи с детьми, рядом с хорошей школой.',
     status: 'Материнский капитал',
-    lat: 55.715,
-    lng: 37.560
+    lat: 55.7150,
+    lng: 37.5600
   }
 ];
 
 export default function PrototypeUI() {
+  const navigate = useNavigate();
   const [selectedItem, setSelectedItem] = useState<number | null>(null);
   const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
   const [offerAmount, setOfferAmount] = useState('');
@@ -89,14 +94,111 @@ export default function PrototypeUI() {
   const [marketMode, setMarketMode] = useState<'supply' | 'demand'>('supply');
   const [showLiquidity, setShowLiquidity] = useState(false);
 
-  const handleOfferSubmit = (e: React.FormEvent) => {
+  // Auth state
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Data state
+  const [properties, setProperties] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // Check authentication on mount
+  useEffect(() => {
+    const token = getAuthToken();
+    setIsAuthenticated(!!token);
+  }, []);
+
+  // Load properties from API
+  useEffect(() => {
+    loadProperties();
+  }, []);
+
+  const loadProperties = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      
+      const result = await propertiesAPI.search({
+        limit: 20,
+        sort_by: 'created_at',
+        sort_order: 'desc',
+      });
+
+      if (result.success && result.data) {
+        // Transform API data to match UI format
+        const transformedProperties = result.data.map((prop: any) => ({
+          id: prop.id,
+          address: `${prop.address?.street || ''}, ${prop.address?.house_number || ''}`,
+          price: `${(prop.listing_price || 0).toLocaleString('ru-RU')} ₽`,
+          rooms: prop.rooms,
+          area: prop.area,
+          floor: `${prop.floor}/${prop.total_floors}`,
+          image: `https://picsum.photos/seed/${prop.id}/400/300`,
+          lat: prop.address?.lat || 55.751,
+          lng: prop.address?.lng || 37.618,
+          bids: prop.offers_count || 0,
+          topBid: prop.top_offer ? `${(prop.top_offer / 1_000_000).toFixed(1)} млн ₽` : 'Нет офферов',
+          liquidity: prop.liquidity_score > 7 ? 'high' : prop.liquidity_score > 4 ? 'medium' : 'low',
+          cadastral_number: prop.cadastral_number,
+          listing_id: prop.listing_id,
+        }));
+
+        setProperties(transformedProperties);
+      } else {
+        // Fallback to mock data if API returns no data
+        setProperties(MOCK_PROPERTIES);
+      }
+    } catch (err: any) {
+      console.error('Failed to load properties:', err);
+      setError('Не удалось загрузить объекты. Используются демо-данные.');
+      // Use mock data as fallback
+      setProperties(MOCK_PROPERTIES);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAuthSuccess = (user: any) => {
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    setIsAuthModalOpen(false);
+    // Перенаправляем в личный кабинет после успешного входа
+    navigate('/dashboard');
+  };
+
+  const handleOfferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setOfferSuccess(true);
-    setTimeout(() => {
+    
+    if (!isAuthenticated) {
       setIsOfferModalOpen(false);
-      setOfferSuccess(false);
-      setOfferAmount('');
-    }, 2000);
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    try {
+      const selectedProperty = properties.find(p => p.id === selectedItem);
+      if (!selectedProperty) return;
+
+      await offersAPI.create({
+        listing_id: selectedProperty.listing_id || selectedProperty.id,
+        property_id: selectedProperty.id,
+        amount: parseFloat(offerAmount),
+        financing_type: 'cash',
+      });
+
+      setOfferSuccess(true);
+      setTimeout(() => {
+        setIsOfferModalOpen(false);
+        setOfferSuccess(false);
+        setOfferAmount('');
+        loadProperties(); // Reload to get updated offer counts
+      }, 2000);
+    } catch (err: any) {
+      console.error('Failed to create offer:', err);
+      alert('Не удалось создать оффер: ' + err.message);
+    }
   };
 
   if (activeView === 'passport') {
@@ -104,7 +206,7 @@ export default function PrototypeUI() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900 font-sans">
+    <div className="h-screen w-screen flex flex-col bg-gray-50 dark:bg-gray-900 font-sans overflow-hidden">
       {/* Top Navbar */}
       <header className="h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-6 flex-shrink-0 z-10">
         <div className="flex items-center gap-8">
@@ -131,16 +233,34 @@ export default function PrototypeUI() {
               className="pl-10 pr-4 py-2 w-80 bg-gray-100 dark:bg-gray-900 border-none rounded-full text-sm focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white"
             />
           </div>
-          <button className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">ВМ</span>
-          </button>
+          {isAuthenticated ? (
+            <button 
+              onClick={() => navigate('/dashboard')}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors"
+            >
+              <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center">
+                <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
+                  {currentUser?.first_name?.[0] || 'U'}
+                </span>
+              </div>
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Личный кабинет</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full font-medium transition-colors"
+            >
+              <LogIn className="w-4 h-4" />
+              Войти
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Sidebar - List */}
-        <div className="w-full md:w-[450px] bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col flex-shrink-0 z-10 shadow-xl">
+        <div className="w-full md:w-[450px] bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col flex-shrink-0 z-10 shadow-xl h-full">
           
           {/* Market Toggle (Supply vs Demand) */}
           <div className="p-4 border-b border-gray-100 dark:border-gray-700">
@@ -188,12 +308,24 @@ export default function PrototypeUI() {
 
           {/* List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              {marketMode === 'supply' ? 'Найдено 3 объекта в зоне видимости' : 'Найдено 3 активных покупателя'}
-            </p>
-            
-            {marketMode === 'supply' ? (
-              MOCK_PROPERTIES.map((prop) => (
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+              </div>
+            ) : error ? (
+              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900/50 rounded-lg">
+                <p className="text-sm text-yellow-800 dark:text-yellow-300">{error}</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  {marketMode === 'supply' 
+                    ? `Найдено ${properties.length} объектов` 
+                    : 'Найдено 3 активных покупателя'}
+                </p>
+                
+                {marketMode === 'supply' ? (
+                  properties.map((prop) => (
                 <div 
                   key={prop.id}
                   onClick={() => setActiveView('passport')}
@@ -238,7 +370,12 @@ export default function PrototypeUI() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        setIsOfferModalOpen(true);
+                        setSelectedItem(prop.id);
+                        if (!isAuthenticated) {
+                          setIsAuthModalOpen(true);
+                        } else {
+                          setIsOfferModalOpen(true);
+                        }
                       }}
                       className="w-full py-2.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 dark:text-gray-900 text-white rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
                     >
@@ -279,105 +416,44 @@ export default function PrototypeUI() {
                 </div>
               ))
             )}
+              </>
+            )}
           </div>
         </div>
 
-        {/* Right Area - Map Mockup */}
-        <div className="flex-1 relative bg-[#e5e3df] dark:bg-[#1a1a1a] overflow-hidden">
-          {/* Grid pattern to simulate map */}
-          <div className="absolute inset-0 opacity-20 dark:opacity-10" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-          
-          {/* Map Controls */}
-          <div className="absolute top-4 right-4 flex flex-col gap-2">
-            <button className="w-10 h-10 bg-white dark:bg-gray-800 rounded-xl shadow-md flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-              <span className="text-lg font-bold text-gray-700 dark:text-gray-300">+</span>
-            </button>
-            <button className="w-10 h-10 bg-white dark:bg-gray-800 rounded-xl shadow-md flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-              <span className="text-lg font-bold text-gray-700 dark:text-gray-300">-</span>
-            </button>
-          </div>
-
-          {/* Map Pins */}
-          {marketMode === 'supply' ? (
-            MOCK_PROPERTIES.map((prop, index) => {
-              const top = `${30 + index * 20}%`;
-              const left = `${40 + (index % 2 === 0 ? 10 : -10)}%`;
-              const isSelected = selectedItem === prop.id;
-              
-              // Liquidity colors
-              let liquidityColor = 'bg-white border-indigo-600 text-indigo-900 dark:bg-gray-800 dark:text-white dark:border-indigo-500';
-              let pointerColor = 'bg-white border-indigo-600 dark:bg-gray-800 dark:border-indigo-500';
-              
-              if (showLiquidity) {
-                if (prop.liquidity === 'high') {
-                  liquidityColor = 'bg-green-500 border-green-600 text-white';
-                  pointerColor = 'bg-green-500 border-green-600';
-                } else if (prop.liquidity === 'medium') {
-                  liquidityColor = 'bg-yellow-500 border-yellow-600 text-white';
-                  pointerColor = 'bg-yellow-500 border-yellow-600';
-                } else {
-                  liquidityColor = 'bg-red-500 border-red-600 text-white';
-                  pointerColor = 'bg-red-500 border-red-600';
-                }
+        {/* Right Area - Yandex Map */}
+        <div className="flex-1 relative h-full">
+          <YandexMap
+            pins={marketMode === 'supply' 
+              ? properties.map(p => ({
+                  id: p.id,
+                  lat: p.lat,
+                  lng: p.lng,
+                  price: p.price.split(' ')[0] + ' млн ₽',
+                  liquidity: p.liquidity,
+                  type: 'property' as const
+                }))
+              : MOCK_BUYERS.map(b => ({
+                  id: b.id,
+                  lat: b.lat,
+                  lng: b.lng,
+                  price: b.budget,
+                  type: 'buyer' as const
+                }))
+            }
+            selectedId={selectedItem}
+            onPinClick={(id) => {
+              setSelectedItem(id);
+              if (marketMode === 'supply') {
+                setActiveView('passport');
               }
-
-              if (isSelected) {
-                liquidityColor = 'bg-indigo-600 border-white text-white dark:border-gray-900';
-                pointerColor = 'bg-indigo-600 border-white dark:border-gray-900';
-              }
-
-              return (
-                <div 
-                  key={prop.id}
-                  className="absolute transform -translate-x-1/2 -translate-y-full cursor-pointer z-10"
-                  style={{ top, left }}
-                  onMouseEnter={() => setSelectedItem(prop.id)}
-                  onMouseLeave={() => setSelectedItem(null)}
-                >
-                  <div className={`relative flex flex-col items-center transition-transform duration-300 ${isSelected ? 'scale-110 z-20' : 'scale-100'}`}>
-                    <div className={`px-3 py-1.5 rounded-full font-bold text-sm shadow-lg border-2 whitespace-nowrap ${liquidityColor}`}>
-                      {prop.price.split(' ')[0]} млн ₽
-                    </div>
-                    <div className={`w-3 h-3 rotate-45 -mt-1.5 border-r-2 border-b-2 ${pointerColor}`}></div>
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            MOCK_BUYERS.map((buyer, index) => {
-              const top = `${25 + index * 25}%`;
-              const left = `${35 + (index % 2 === 0 ? 20 : -5)}%`;
-              const isSelected = selectedItem === buyer.id;
-
-              return (
-                <div 
-                  key={buyer.id}
-                  className="absolute transform -translate-x-1/2 -translate-y-full cursor-pointer z-10"
-                  style={{ top, left }}
-                  onMouseEnter={() => setSelectedItem(buyer.id)}
-                  onMouseLeave={() => setSelectedItem(null)}
-                >
-                  <div className={`relative flex flex-col items-center transition-transform duration-300 ${isSelected ? 'scale-110 z-20' : 'scale-100'}`}>
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-lg border-2 ${
-                      isSelected 
-                        ? 'bg-indigo-600 border-white text-white dark:border-gray-900' 
-                        : 'bg-white border-indigo-600 text-indigo-600 dark:bg-gray-800 dark:text-indigo-400 dark:border-indigo-500'
-                    }`}>
-                      <Users className="w-5 h-5" />
-                    </div>
-                    {isSelected && (
-                      <div className="absolute top-full mt-2 bg-white dark:bg-gray-800 px-3 py-2 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 whitespace-nowrap z-30">
-                        <p className="text-xs font-bold text-gray-900 dark:text-white">{buyer.budget}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
+            }}
+            showLiquidity={showLiquidity}
+            marketMode={marketMode}
+          />
 
           {/* Map Layers Control */}
-          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-white/90 dark:bg-gray-800/90 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-gray-200 dark:border-gray-700 flex items-center gap-4 text-sm font-medium">
+          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-white/90 dark:bg-gray-800/90 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-gray-200 dark:border-gray-700 flex items-center gap-4 text-sm font-medium z-10">
             <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1"><Layers className="w-4 h-4"/> Слои:</span>
             <button 
               onClick={() => setShowLiquidity(false)}
@@ -463,6 +539,13 @@ export default function PrototypeUI() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={handleAuthSuccess}
+      />
     </div>
   );
 }
